@@ -1,19 +1,13 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_hooks/flutter_hooks.dart';
-import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'todo.dart';
 
-/// Some keys used for testing
 final addTodoKey = UniqueKey();
 final activeFilterKey = UniqueKey();
 final completedFilterKey = UniqueKey();
 final allFilterKey = UniqueKey();
 
-/// Creates a [TodoList] and initialise it with pre-defined values.
-///
-/// We are using [StateNotifierProvider] here as a `List<Todo>` is a complex
-/// object, with advanced business logic like how to edit a todo.
 final todoListProvider = StateNotifierProvider<TodoList, List<Todo>>((ref) {
   return TodoList(const [
     Todo(id: 'todo-0', description: 'hi'),
@@ -22,35 +16,18 @@ final todoListProvider = StateNotifierProvider<TodoList, List<Todo>>((ref) {
   ]);
 });
 
-/// The different ways to filter the list of todos
 enum TodoListFilter {
   all,
   active,
   completed,
 }
 
-/// The currently active filter.
-///
-/// We use [StateProvider] here as there is no fancy logic behind manipulating
-/// the value since it's just enum.
 final todoListFilter = StateProvider((_) => TodoListFilter.all);
 
-/// The number of uncompleted todos
-///
-/// By using [Provider], this value is cached, making it performant.\
-/// Even multiple widgets try to read the number of uncompleted todos,
-/// the value will be computed only once (until the todo-list changes).
-///
-/// This will also optimise unneeded rebuilds if the todo-list changes, but the
-/// number of uncompleted todos doesn't (such as when editing a todo).
 final uncompletedTodosCount = Provider<int>((ref) {
   return ref.watch(todoListProvider).where((todo) => !todo.completed).length;
 });
 
-/// The list of todos after applying of [todoListFilter].
-///
-/// This too uses [Provider], to avoid recomputing the filtered list unless either
-/// the filter of or the todo-list updates.
 final filteredTodos = Provider<List<Todo>>((ref) {
   final filter = ref.watch(todoListFilter);
   final todos = ref.watch(todoListProvider);
@@ -80,14 +57,27 @@ class MyApp extends StatelessWidget {
   }
 }
 
-class Home extends HookConsumerWidget {
+class Home extends ConsumerStatefulWidget {
   const Home({Key? key}) : super(key: key);
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final todos = ref.watch(filteredTodos);
-    final newTodoController = useTextEditingController();
+  ConsumerState<ConsumerStatefulWidget> createState() => _HomeState();
+}
 
+class _HomeState extends ConsumerState<Home> {
+  @override
+  Widget build(BuildContext context) {
+    final todos = ref.watch(filteredTodos);
+    final newTodoController =
+        Provider.autoDispose<TextEditingController>((ref) {
+      final controller = TextEditingController();
+
+      ref.onDispose(() {
+        controller.dispose();
+      });
+
+      return controller;
+    });
     return GestureDetector(
       onTap: () => FocusScope.of(context).unfocus(),
       child: Scaffold(
@@ -97,13 +87,13 @@ class Home extends HookConsumerWidget {
             const Title(),
             TextField(
               key: addTodoKey,
-              controller: newTodoController,
+              controller: ref.watch(newTodoController),
               decoration: const InputDecoration(
                 labelText: 'What needs to be done?',
               ),
               onSubmitted: (value) {
                 ref.read(todoListProvider.notifier).add(value);
-                newTodoController.clear();
+                ref.watch(newTodoController).clear();
               },
             ),
             const SizedBox(height: 42),
@@ -131,7 +121,7 @@ class Home extends HookConsumerWidget {
   }
 }
 
-class Toolbar extends HookConsumerWidget {
+class Toolbar extends ConsumerWidget {
   const Toolbar({
     Key? key,
   }) : super(key: key);
@@ -222,79 +212,80 @@ class Title extends StatelessWidget {
   }
 }
 
-/// A provider which exposes the [Todo] displayed by a [TodoItem].
-///
-/// By retrieving the [Todo] through a provider instead of through its
-/// constructor, this allows [TodoItem] to be instantiated using the `const` keyword.
-///
-/// This ensures that when we add/remove/edit todos, only what the
-/// impacted widgets rebuilds, instead of the entire list of items.
 final _currentTodo = Provider<Todo>((ref) => throw UnimplementedError());
 
-class TodoItem extends HookConsumerWidget {
+class TodoItem extends ConsumerStatefulWidget {
   const TodoItem({Key? key}) : super(key: key);
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<ConsumerStatefulWidget> createState() => _TodoItemState();
+}
+
+class _TodoItemState extends ConsumerState<TodoItem> {
+  final textEditingController =
+      Provider.autoDispose<TextEditingController>((ref) {
+    final controller = TextEditingController();
+
+    ref.onDispose(() {
+      controller.dispose();
+    });
+
+    return controller;
+  });
+  final itemFocusNode = Provider.autoDispose<FocusNode>((ref) {
+    final controller = FocusNode();
+
+    ref.onDispose(() {
+      controller.dispose();
+    });
+
+    return controller;
+  });
+  final textFieldFocusNode = Provider.autoDispose<FocusNode>((ref) {
+    final controller = FocusNode();
+
+    ref.onDispose(() {
+      controller.dispose();
+    });
+
+    return controller;
+  });
+  @override
+  Widget build(BuildContext context) {
     final todo = ref.watch(_currentTodo);
-    final itemFocusNode = useFocusNode();
-    final itemIsFocused = useIsFocused(itemFocusNode);
-
-    final textEditingController = useTextEditingController();
-    final textFieldFocusNode = useFocusNode();
-
     return Material(
       color: Colors.white,
       elevation: 6,
       child: Focus(
-        focusNode: itemFocusNode,
+        focusNode: ref.watch(itemFocusNode),
         onFocusChange: (focused) {
           if (focused) {
-            textEditingController.text = todo.description;
+            ref.watch(textEditingController).text = todo.description;
           } else {
-            // Commit changes only when the textfield is unfocused, for performance
-            ref
-                .read(todoListProvider.notifier)
-                .edit(id: todo.id, description: textEditingController.text);
+            ref.watch(todoListProvider.notifier).edit(
+                id: todo.id,
+                description: ref.watch(textEditingController).text);
           }
         },
         child: ListTile(
           onTap: () {
-            itemFocusNode.requestFocus();
-            textFieldFocusNode.requestFocus();
+            ref.watch(itemFocusNode).requestFocus();
+            ref.watch(textFieldFocusNode).requestFocus();
           },
           leading: Checkbox(
             value: todo.completed,
             onChanged: (value) =>
-                ref.read(todoListProvider.notifier).toggle(todo.id),
+                ref.watch(todoListProvider.notifier).toggle(todo.id),
           ),
-          title: itemIsFocused
+          title: ref.watch(itemFocusNode).hasFocus
               ? TextField(
                   autofocus: true,
-                  focusNode: textFieldFocusNode,
-                  controller: textEditingController,
+                  focusNode: ref.watch(textFieldFocusNode),
+                  controller: ref.watch(textEditingController),
                 )
               : Text(todo.description),
         ),
       ),
     );
   }
-}
-
-bool useIsFocused(FocusNode node) {
-  final isFocused = useState(node.hasFocus);
-
-  useEffect(
-    () {
-      void listener() {
-        isFocused.value = node.hasFocus;
-      }
-
-      node.addListener(listener);
-      return () => node.removeListener(listener);
-    },
-    [node],
-  );
-
-  return isFocused.value;
 }
